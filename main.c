@@ -40,13 +40,52 @@ static void format_83(char out[13], const uint8_t name11[11]) {
 }
 
 uint16_t fat16_get(const uint8_t *img, uint32_t P, uint32_t FATStart,
-                   uint16_t BytsPerSec, uint32_t cluster) {
+                   uint32_t cluster) {
   uint64_t fat_base = (uint64_t)(P + FATStart) * 512ull;
   uint64_t off = fat_base + 2ull * cluster;
 
   uint16_t v;
   memcpy(&v, img + off, 2);
   return le16toh(v);
+}
+
+void fat_traverse_clusters(const uint8_t *img, uint32_t partition_start,
+                           uint32_t fat_start, uint16_t cur) {
+
+  int n_clus_to_eoc = 0;
+
+  if (cur >= 2) {
+    // ******************** CLUSTER TRAVERSAL  ********************
+    while (1) {
+      uint16_t nxt = fat16_get(img, partition_start, fat_start, cur);
+
+      if (n_clus_to_eoc == 0 && nxt < FAT_EOC)
+        printf("  FAT[%u | 0x%x] = %04x\n", (unsigned)cur, (unsigned)cur,
+               (unsigned)nxt);
+
+      if (nxt >= FAT_EOC) {
+        if (n_clus_to_eoc > 2) {
+          printf("  ...\n");
+          printf("  FAT[%u | 0x%x] = %04x\n", (unsigned)cur, (unsigned)cur,
+                 (unsigned)nxt);
+        }
+        n_clus_to_eoc = 0;
+        break;
+      }
+      if (nxt >= FAT_BAD_CLUSTER) {
+        n_clus_to_eoc = 0;
+        break;
+      }
+      if (nxt < 2) {
+        n_clus_to_eoc = 0;
+        break;
+      }
+
+      ++n_clus_to_eoc;
+      cur = nxt;
+    }
+    // ******************** END OF CLUSTER TRAVERSAL ********************
+  }
 }
 
 int main(int argc, char **argv) {
@@ -147,6 +186,7 @@ int main(int argc, char **argv) {
 
   printf("root scan:\n");
   char entry[13];
+  // ******************** ROOT ENTRY LIST ********************
   for (size_t i = 0; i < max_entries; i++) {
     const fat_dirent_t *e = &ent[i];
 
@@ -166,39 +206,14 @@ int main(int argc, char **argv) {
 
     printf("%-12s clus=%u size=%u attr=%02x\n", entry, (unsigned)c0,
            (unsigned)le32toh(e->file_size), e->attr);
-    uint16_t cur = c0;
-
-    if (cur >= 2) {
-
-      int n_clus_to_eoc = 0;
-      while (1) {
-        uint16_t nxt =
-            fat16_get(img, partition_start, fat_start, bytes_per_sec, cur);
-
-        if (n_clus_to_eoc == 0 && nxt < FAT_EOC)
-          printf("  FAT[%u] = %04x\n", (unsigned)cur, (unsigned)nxt);
-
-        if (nxt >= FAT_EOC) {
-          if (n_clus_to_eoc > 2) {
-            printf("  ...\n");
-            printf("  FAT[%u] = %04x\n", (unsigned)cur, (unsigned)nxt);
-          }
-          n_clus_to_eoc = 0;
-          break;
-        }
-        if (nxt >= FAT_BAD_CLUSTER) {
-          n_clus_to_eoc = 0;
-          break;
-        }
-        if (nxt < 2) {
-          n_clus_to_eoc = 0;
-          break;
-        }
-
-        ++n_clus_to_eoc;
-        cur = nxt;
-      }
-    }
+    fat_traverse_clusters(img, partition_start, fat_start, c0);
+  }
+  // ******************** END OF ROOT ENTRY LIST ********************
+  uint16_t clus = FAT_EOC;
+  while (1) {
+    printf("Follow cluster> ");
+    scanf("%hu", &clus);
+    fat_traverse_clusters(img, partition_start, fat_start, clus);
   }
 
   munmap(img, len_file);

@@ -1,3 +1,3 @@
 #!/bin/sh
 
-gcc main.c -oimgrd
+gcc main.c -Wall -Wextra -pedantic -oimgrd
