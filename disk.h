@@ -2,6 +2,7 @@
 #define DISK_H
 
 #include <endian.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <string.h>
 #pragma pack(push, 1)
@@ -72,7 +73,31 @@ typedef struct fat_dirent_t {
 } fat_dirent_t;
 #pragma pack(pop)
 
-static uint32_t ceil_div_u32(uint32_t a, uint32_t b) { return (a + b - 1) / b; }
+typedef struct fat_volume_t {
+  const uint8_t *img;
+  const mbr_t *mbr;
+  int part_idx;
+  uint32_t part_lba_start;
+  uint32_t part_lba_count;
+  uint32_t fat_start;
+  uint32_t root_start;
+  uint32_t data_start;
+  uint32_t root_dir_sectors;
+  uint32_t bytes_per_sec;
+  uint32_t sec_per_clus;
+  uint32_t rsvd_sec_cnt;
+  uint32_t num_fats;
+  uint32_t root_ent_cnt;
+  uint32_t fat_sz_16;
+  uint32_t tot_sec;
+  uint32_t data_sectors;
+  uint32_t clusters;
+  size_t max_entries;
+} fat_volume_t;
+
+static inline uint32_t ceil_div_u32(uint32_t a, uint32_t b) {
+  return (a + b - 1) / b;
+}
 static inline int fat16_is_eoc(uint16_t v) { return v >= FAT_EOC; }
 
 #endif

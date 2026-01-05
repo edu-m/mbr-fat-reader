@@ -1,10 +1,10 @@
 #include "disk.h"
+#include "prompt.h"
 #include <endian.h>
 #include <fcntl.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -16,76 +16,6 @@ static void error(const char *what) {
 
 static int is_fat16_type(uint8_t t) {
   return t == 0x04 || t == 0x06 || t == 0x0E;
-}
-
-static void format_83(char out[13], const uint8_t name11[11]) {
-  char name[9], ext[4];
-  memcpy(name, name11, 8);
-  name[8] = 0;
-  memcpy(ext, name11 + 8, 3);
-  ext[3] = 0;
-
-  if ((uint8_t)name[0] == 0x05)
-    name[0] = (char)0xE5;
-
-  for (int i = 7; i >= 0 && name[i] == ' '; i--)
-    name[i] = 0;
-  for (int i = 2; i >= 0 && ext[i] == ' '; i--)
-    ext[i] = 0;
-
-  if (ext[0])
-    snprintf(out, 17, "%s.%s", name, ext);
-  else
-    snprintf(out, 17, "%s (DIR)", name);
-}
-
-uint16_t fat16_get(const uint8_t *img, uint32_t P, uint32_t FATStart,
-                   uint32_t cluster) {
-  uint64_t fat_base = (uint64_t)(P + FATStart) * 512ull;
-  uint64_t off = fat_base + 2ull * cluster;
-
-  uint16_t v;
-  memcpy(&v, img + off, 2);
-  return le16toh(v);
-}
-
-void fat_traverse_clusters(const uint8_t *img, uint32_t partition_start,
-                           uint32_t fat_start, uint16_t cur) {
-
-  int n_clus_to_eoc = 0;
-
-  if (cur >= 2) {
-    // ******************** CLUSTER TRAVERSAL  ********************
-    while (1) {
-      uint16_t nxt = fat16_get(img, partition_start, fat_start, cur);
-
-      if (n_clus_to_eoc == 0 && nxt < FAT_EOC)
-        printf("  FAT[%u | 0x%x] = %04x\n", (unsigned)cur, (unsigned)cur,
-               (unsigned)nxt);
-
-      if (nxt >= FAT_EOC) {
-        if (n_clus_to_eoc > 2) {
-          printf("  ...\n");
-          printf("  FAT[%u | 0x%x] = %04x\n", (unsigned)cur, (unsigned)cur,
-                 (unsigned)nxt);
-        }
-        n_clus_to_eoc = 0;
-        break;
-      }
-      if (nxt >= FAT_BAD_CLUSTER) {
-        n_clus_to_eoc = 0;
-        break;
-      }
-      if (nxt < 2) {
-        n_clus_to_eoc = 0;
-        break;
-      }
-
-      ++n_clus_to_eoc;
-      cur = nxt;
-    }
-    // ******************** END OF CLUSTER TRAVERSAL ********************
-  }
 }
 
 int main(int argc, char **argv) {
@@ -134,9 +64,6 @@ int main(int argc, char **argv) {
   if (idx < 0)
     error("No FAT16 partition entry found in MBR");
 
-  printf("MBR: selected partition %d type=0x%02x startLBA=%u sectors=%u\n", idx,
-         mbr->part[idx].part_type, part_lba_start, part_lba_count);
-
   uint64_t p_off = (uint64_t)part_lba_start * 512ull;
   if (p_off + 512ull > len_file)
     error("Partition start beyond end of image");
@@ -164,57 +91,33 @@ int main(int argc, char **argv) {
   uint32_t root_start = rsvd_sec_cnt + num_fats * fat_sz_16;
   uint32_t data_start = root_start + root_dir_sectors;
 
-  printf("BPB: bytes/sec=%u sec/clus=%u rsvd=%u fats=%u rootEnt=%u fatsz=%u "
-         "totsec=%u\n",
-         bytes_per_sec, sec_per_clus, rsvd_sec_cnt, num_fats, root_ent_cnt,
-         fat_sz_16, tot_sec);
-
-  printf("Layout (relative to partition): FATStart=%u RootStart=%u "
-         "DataStart=%u RootDirSectors=%u\n",
-         fat_start, root_start, data_start, root_dir_sectors);
-
   uint32_t data_sectors =
       tot_sec - (rsvd_sec_cnt + num_fats * fat_sz_16 + root_dir_sectors);
   uint32_t clusters = data_sectors / sec_per_clus;
-  printf("Derived: dataSectors=%u clusterCount=%u\n", data_sectors, clusters);
 
   size_t max_entries = root_ent_cnt;
-  uint32_t partition_start = le32toh(mbr->part[idx].lba_start);
 
-  uint64_t root_byte_off = (uint64_t)(partition_start + root_start) * 512ull;
-  const fat_dirent_t *ent = (const fat_dirent_t *)(img + root_byte_off);
+  fat_volume_t volume = {.img = img,
+                         .mbr = mbr,
+                         .part_idx = idx,
+                         .part_lba_start = part_lba_start,
+                         .part_lba_count = part_lba_count,
+                         .fat_start = fat_start,
+                         .root_start = root_start,
+                         .data_start = data_start,
+                         .root_dir_sectors = root_dir_sectors,
+                         .bytes_per_sec = bytes_per_sec,
+                         .sec_per_clus = sec_per_clus,
+                         .rsvd_sec_cnt = rsvd_sec_cnt,
+                         .num_fats = num_fats,
+                         .root_ent_cnt = root_ent_cnt,
+                         .fat_sz_16 = fat_sz_16,
+                         .tot_sec = tot_sec,
+                         .data_sectors = data_sectors,
+                         .clusters = clusters,
+                         .max_entries = max_entries};
 
-  printf("root scan:\n");
-  char entry[13];
-  // ******************** ROOT ENTRY LIST ********************
-  for (size_t i = 0; i < max_entries; i++) {
-    const fat_dirent_t *e = &ent[i];
-
-    if (e->name[0] == 0x00) // end marker
-      break;
-    if (e->name[0] == 0xE5) // deleted
-      continue;
-    if (e->attr == 0x0F) // lfn
-      continue;
-
-    if (e->attr & 0x08)
-      continue;
-
-    format_83(entry, e->name);
-
-    uint16_t c0 = le16toh(e->fst_clus_lo);
-
-    printf("%-12s clus=%u size=%u attr=%02x\n", entry, (unsigned)c0,
-           (unsigned)le32toh(e->file_size), e->attr);
-    fat_traverse_clusters(img, partition_start, fat_start, c0);
-  }
-  // ******************** END OF ROOT ENTRY LIST ********************
-  uint16_t clus = FAT_EOC;
-  while (1) {
-    printf("Follow cluster> ");
-    scanf("%hu", &clus);
-    fat_traverse_clusters(img, partition_start, fat_start, clus);
-  }
+  prompt_loop(&volume);
 
   munmap(img, len_file);
   close(fd);

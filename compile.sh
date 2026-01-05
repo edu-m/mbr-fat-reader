@@ -1,3 +1,3 @@
 #!/bin/sh
 
-gcc main.c -Wall -Wextra -pedantic -oimgrd
+gcc main.c prompt.c fat.c -Wall -Wextra -pedantic -oimgrd
