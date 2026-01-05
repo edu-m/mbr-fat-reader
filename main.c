@@ -98,7 +98,6 @@ int main(int argc, char **argv) {
   printf("MBR: selected partition %d type=0x%02x startLBA=%u sectors=%u\n", idx,
          mbr->part[idx].part_type, part_lba_start, part_lba_count);
 
-  // 3) FAT boot sector (VBR) at partition_start_lba * 512
   uint64_t p_off = (uint64_t)part_lba_start * 512ull;
   if (p_off + 512ull > len_file)
     error("Partition start beyond end of image");
@@ -147,18 +146,17 @@ int main(int argc, char **argv) {
   const fat_dirent_t *ent = (const fat_dirent_t *)(img + root_byte_off);
 
   printf("root scan:\n");
-  char entry[13]; // 8.3 formatted needs at most 12 + '\0'
+  char entry[13];
   for (size_t i = 0; i < max_entries; i++) {
     const fat_dirent_t *e = &ent[i];
 
-    if (e->name[0] == 0x00)
-      break; // end marker
-    if (e->name[0] == 0xE5)
-      continue; // deleted
-    if (e->attr == 0x0F)
-      continue; // LFN
+    if (e->name[0] == 0x00) // end marker
+      break;
+    if (e->name[0] == 0xE5) // deleted
+      continue;
+    if (e->attr == 0x0F) // lfn
+      continue;
 
-    // skip volume labels (optional but recommended)
     if (e->attr & 0x08)
       continue;
 
@@ -177,11 +175,9 @@ int main(int argc, char **argv) {
         uint16_t nxt =
             fat16_get(img, partition_start, fat_start, bytes_per_sec, cur);
 
-        // print mapping: FAT[cur] = nxt
         if (n_clus_to_eoc == 0 && nxt < FAT_EOC)
           printf("  FAT[%u] = %04x\n", (unsigned)cur, (unsigned)nxt);
 
-        // stop conditions
         if (nxt >= FAT_EOC) {
           if (n_clus_to_eoc > 2) {
             printf("  ...\n");
@@ -192,13 +188,13 @@ int main(int argc, char **argv) {
         }
         if (nxt >= FAT_BAD_CLUSTER) {
           n_clus_to_eoc = 0;
-          break; // bad cluster
+          break;
         }
         if (nxt < 2) {
           n_clus_to_eoc = 0;
-          break; // 0 free or 1 reserved -> broken chain
+          break;
         }
-        // advance
+
         ++n_clus_to_eoc;
         cur = nxt;
       }
