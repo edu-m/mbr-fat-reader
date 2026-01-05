@@ -1,3 +1,4 @@
 *.img
 *.HEX
 imgrd
+experimental/*

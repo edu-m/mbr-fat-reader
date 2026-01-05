@@ -116,7 +116,7 @@ int main(int argc, char **argv) {
                          .data_sectors = data_sectors,
                          .clusters = clusters,
                          .max_entries = max_entries};
-
+  printf("MBR-FAT16 Reader\tEduardo Meli 2026\n");
   prompt_loop(&volume);
 
   munmap(img, len_file);

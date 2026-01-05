@@ -25,12 +25,17 @@ void format_83(char *out, size_t out_len, const uint8_t name11[11]) {
 
 static uint16_t fat16_get(const fat_volume_t *volume, uint32_t cluster) {
   uint64_t fat_base =
-      (uint64_t)(volume->part_lba_start + volume->fat_start) * 512ull;
+      (uint64_t)(volume->part_lba_start + volume->fat_start) *
+      (uint64_t)volume->bytes_per_sec;
   uint64_t off = fat_base + 2ull * cluster;
 
   uint16_t v;
   memcpy(&v, volume->img + off, 2);
   return le16toh(v);
+}
+
+uint16_t fat_next_cluster(const fat_volume_t *volume, uint16_t cluster) {
+  return fat16_get(volume, cluster);
 }
 
 void fat_traverse_clusters(const fat_volume_t *volume, uint16_t cur) {
@@ -41,18 +46,18 @@ void fat_traverse_clusters(const fat_volume_t *volume, uint16_t cur) {
 
   while (1) {
     uint16_t nxt = fat16_get(volume, cur);
-    if(n_clus_to_eoc == 0 && nxt >= FAT_EOC)
-        printf("  EOC\n");
+    if (n_clus_to_eoc == 0 && nxt >= FAT_EOC)
+      printf("  [EOC]\n");
 
     if (n_clus_to_eoc == 0 && nxt < FAT_EOC)
-      printf("  FAT[%u | 0x%x] = 0x%04x\n", (unsigned)cur, (unsigned)cur,
-             (unsigned)nxt);
+      printf("  FAT[%u | 0x%x] = [%hu | 0x%04x]\n", (unsigned)cur,
+             (unsigned)cur, (unsigned)nxt, (unsigned)nxt);
 
     if (nxt >= FAT_EOC) {
       if (n_clus_to_eoc > 2) {
         printf("  ...\n");
-        printf("  FAT[%u | 0x%x] = 0x%04x\n", (unsigned)cur, (unsigned)cur,
-               (unsigned)nxt);
+        printf("  FAT[%u | 0x%x] = [EOC]\n", (unsigned)cur,
+               (unsigned)cur);
       }
       break;
     }
