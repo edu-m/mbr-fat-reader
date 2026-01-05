@@ -214,7 +214,7 @@ static int cmd_dump(const fat_volume_t *volume, const char *args) {
   }
 
   if (cluster_looks_like_directory(volume, clus)) {
-    printf("Refusing to dump cluster %u: looks like a directory\n",
+    printf("%u looks like a directory, only files can be dumped\n",
            (unsigned)clus);
     return 1;
   }
