@@ -75,6 +75,7 @@ typedef struct fat_dirent_t {
 
 typedef struct fat_volume_t {
   const uint8_t *img;
+  size_t img_size;
   const mbr_t *mbr;
   int part_idx;
   uint32_t part_lba_start;

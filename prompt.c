@@ -80,6 +80,28 @@ static uint64_t cluster_byte_offset(const fat_volume_t *volume,
   return lba * (uint64_t)volume->bytes_per_sec;
 }
 
+static void hexdump(const uint8_t *buf, size_t len) {
+  const size_t width = 16;
+  for (size_t i = 0; i < len; i += width) {
+    size_t chunk = (len - i < width) ? (len - i) : width;
+    printf("%08zx  ", i);
+    for (size_t j = 0; j < width; j++) {
+      if (j < chunk)
+        printf("%02x ", buf[i + j]);
+      else
+        printf("   ");
+      if (j == 7)
+        printf(" ");
+    }
+    printf(" |");
+    for (size_t j = 0; j < chunk; j++) {
+      unsigned char c = buf[i + j];
+      printf("%c", isprint(c) ? c : '.');
+    }
+    printf("|\n");
+  }
+}
+
 static int parse_cluster_arg(const char *args, uint16_t *cluster) {
   if (!args || *args == '\0')
     return 0;
@@ -158,6 +180,59 @@ static int cmd_dir(const fat_volume_t *volume, const char *args) {
   return 1;
 }
 
+static bool cluster_looks_like_directory(const fat_volume_t *volume,
+                                         uint16_t cluster) {
+  size_t bytes_per_cluster = volume->bytes_per_sec * volume->sec_per_clus;
+  if (bytes_per_cluster < sizeof(fat_dirent_t))
+    return false;
+
+  uint64_t off = cluster_byte_offset(volume, cluster);
+  if (off + sizeof(fat_dirent_t) > volume->img_size)
+    return false;
+
+  const fat_dirent_t *entries = (const fat_dirent_t *)(volume->img + off);
+  const fat_dirent_t *e0 = &entries[0];
+  const fat_dirent_t *e1 = &entries[1];
+
+  if (e0->name[0] == '.' && (e0->attr & 0x10))
+    return true;
+  if (e1->name[0] == '.' && (e1->attr & 0x10))
+    return true;
+  return false;
+}
+
+static int cmd_dump(const fat_volume_t *volume, const char *args) {
+  uint16_t clus = 0;
+  if (!parse_cluster_arg(args, &clus) || clus < 2) {
+    printf("usage: dump <cluster>\n");
+    return 1;
+  }
+
+  if (clus > volume->clusters + 1) {
+    printf("Cluster %u out of range\n", (unsigned)clus);
+    return 1;
+  }
+
+  if (cluster_looks_like_directory(volume, clus)) {
+    printf("Refusing to dump cluster %u: looks like a directory\n",
+           (unsigned)clus);
+    return 1;
+  }
+
+  size_t bytes_per_cluster = volume->bytes_per_sec * volume->sec_per_clus;
+  uint64_t off = cluster_byte_offset(volume, clus);
+  if (off + bytes_per_cluster > volume->img_size) {
+    printf("Refusing to dump cluster %u: beyond image size\n",
+           (unsigned)clus);
+    return 1;
+  }
+
+  printf("Dumping cluster %u (%zu bytes)\n", (unsigned)clus,
+         bytes_per_cluster);
+  hexdump(volume->img + off, bytes_per_cluster);
+  return 1;
+}
+
 static int cmd_help(const fat_volume_t *volume, const char *args);
 static int cmd_quit(const fat_volume_t *volume, const char *args);
 
@@ -168,6 +243,7 @@ static const prompt_command_t PROMPT_COMMANDS[] = {
      cmd_root_scan},
     {"dir", "List directory entries starting at cluster (dir <cluster>)",
      cmd_dir},
+    {"dump", "Hexdump a file starting cluster (dump <cluster>)", cmd_dump},
     {"mbr", "Show partition/MBR/FAT layout info", cmd_mbrinfo},
     {"help", "Show available commands", cmd_help},
     {"quit", "Exit the tool", cmd_quit},

@@ -98,6 +98,7 @@ int main(int argc, char **argv) {
   size_t max_entries = root_ent_cnt;
 
   fat_volume_t volume = {.img = img,
+                         .img_size = len_file,
                          .mbr = mbr,
                          .part_idx = idx,
                          .part_lba_start = part_lba_start,
