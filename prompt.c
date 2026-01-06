@@ -1,5 +1,5 @@
-#include "fat.h"
 #include "prompt.h"
+#include "fat.h"
 #include <ctype.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -13,21 +13,20 @@ static bool print_dir_entries(const fat_volume_t *volume,
   for (size_t i = 0; i < count; i++) {
     const fat_dirent_t *e = &entries[i];
 
-    if (e->name[0] == 0x00) // end marker
+    if (e->name[0] == FATATTR_END) // end marker
       return true;
-    if (e->name[0] == 0xE5) // deleted
+    if (e->name[0] == FAT_DIRENT_NAME_DELETED) // deleted
       continue;
-    if (e->attr == 0x0F) // lfn
-      continue;
-
-    if (e->attr & 0x08)
+    if (e->attr == FAT_DIRENT_ATTR_LFN) // lfn
       continue;
 
-    format_83(entry, sizeof(entry), e->name);
+    if (e->attr & FATATTR_VOL)
+      continue;
 
     uint16_t c0 = le16toh(e->fst_clus_lo);
+    format_83(fat16_is_dir(volume, c0), entry, sizeof(entry), e->name);
 
-    printf("%-18s clus=%-6u size=%-10u attr=%02x\n", entry, (unsigned)c0,
+    printf("%-18s clus=%-6u size=%-10u attr=0x%02x\n", entry, (unsigned)c0,
            (unsigned)le32toh(e->file_size), e->attr);
     fat_traverse_clusters(volume, c0);
   }
@@ -35,13 +34,12 @@ static bool print_dir_entries(const fat_volume_t *volume,
 }
 
 static void prompt_root_scan(const fat_volume_t *volume) {
-  printf("root scan:\n");
+  printf("Root scan:\n");
 
   uint64_t root_byte_off =
       (uint64_t)(volume->part_lba_start + volume->root_start) * 512ull;
 
-  const fat_dirent_t *ent =
-      (const fat_dirent_t *)(volume->img + root_byte_off);
+  const fat_dirent_t *ent = (const fat_dirent_t *)(volume->img + root_byte_off);
 
   // ******************** ROOT ENTRY LIST ********************
   print_dir_entries(volume, ent, volume->max_entries);
@@ -72,13 +70,6 @@ typedef struct prompt_command_t {
   const char *help;
   command_handler_t handler;
 } prompt_command_t;
-
-static uint64_t cluster_byte_offset(const fat_volume_t *volume,
-                                    uint16_t cluster) {
-  uint64_t lba = (uint64_t)(volume->part_lba_start + volume->data_start) +
-                 (uint64_t)(cluster - 2u) * volume->sec_per_clus;
-  return lba * (uint64_t)volume->bytes_per_sec;
-}
 
 static void hexdump(const uint8_t *buf, size_t len) {
   const size_t width = 16;
@@ -146,8 +137,15 @@ static int cmd_dir(const fat_volume_t *volume, const char *args) {
   uint16_t clus = 0;
   if (!parse_cluster_arg(args, &clus) || clus < 2) {
     printf("usage: dir <cluster>\n");
-    printf("Note: cluster must be >= 2 (root directory uses the \"root\" command)\n");
+    printf("Note: cluster must be >= 2 (root directory uses the \"root\" "
+           "command)\n");
     return 1;
+  }
+
+  if (!fat16_is_dir(volume, clus)) {
+    printf("Warning: cluster %hu looks to be a file, dir scan might produce "
+           "garbled data\n",
+           clus);
   }
 
   size_t entries_per_cluster =
@@ -180,27 +178,6 @@ static int cmd_dir(const fat_volume_t *volume, const char *args) {
   return 1;
 }
 
-static bool cluster_looks_like_directory(const fat_volume_t *volume,
-                                         uint16_t cluster) {
-  size_t bytes_per_cluster = volume->bytes_per_sec * volume->sec_per_clus;
-  if (bytes_per_cluster < sizeof(fat_dirent_t))
-    return false;
-
-  uint64_t off = cluster_byte_offset(volume, cluster);
-  if (off + sizeof(fat_dirent_t) > volume->img_size)
-    return false;
-
-  const fat_dirent_t *entries = (const fat_dirent_t *)(volume->img + off);
-  const fat_dirent_t *e0 = &entries[0];
-  const fat_dirent_t *e1 = &entries[1];
-
-  if (e0->name[0] == '.' && (e0->attr & 0x10))
-    return true;
-  if (e1->name[0] == '.' && (e1->attr & 0x10))
-    return true;
-  return false;
-}
-
 static int cmd_dump(const fat_volume_t *volume, const char *args) {
   uint16_t clus = 0;
   if (!parse_cluster_arg(args, &clus) || clus < 2) {
@@ -213,7 +190,7 @@ static int cmd_dump(const fat_volume_t *volume, const char *args) {
     return 1;
   }
 
-  if (cluster_looks_like_directory(volume, clus)) {
+  if (fat16_is_dir(volume, clus)) {
     printf("%u looks like a directory, only files can be dumped\n",
            (unsigned)clus);
     return 1;
@@ -222,13 +199,11 @@ static int cmd_dump(const fat_volume_t *volume, const char *args) {
   size_t bytes_per_cluster = volume->bytes_per_sec * volume->sec_per_clus;
   uint64_t off = cluster_byte_offset(volume, clus);
   if (off + bytes_per_cluster > volume->img_size) {
-    printf("Refusing to dump cluster %u: beyond image size\n",
-           (unsigned)clus);
+    printf("Refusing to dump cluster %u: beyond image size\n", (unsigned)clus);
     return 1;
   }
 
-  printf("Dumping cluster %u (%zu bytes)\n", (unsigned)clus,
-         bytes_per_cluster);
+  printf("Dumping cluster %u (%zu bytes)\n", (unsigned)clus, bytes_per_cluster);
   hexdump(volume->img + off, bytes_per_cluster);
   return 1;
 }
@@ -306,6 +281,10 @@ void prompt_loop(const fat_volume_t *volume) {
         args++;
     } else {
       args = "";
+    }
+
+    for (int i = 0; cmd[i]; i++) {
+      cmd[i] = tolower(cmd[i]);
     }
 
     const prompt_command_t *command = find_command(cmd);

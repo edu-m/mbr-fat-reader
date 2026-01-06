@@ -3,7 +3,8 @@
 #include <stdio.h>
 #include <string.h>
 
-void format_83(char *out, size_t out_len, const uint8_t name11[11]) {
+void format_83(const int dir, char *out, size_t out_len,
+               const uint8_t name11[11]) {
   char name[9], ext[4];
   memcpy(name, name11, 8);
   name[8] = 0;
@@ -21,13 +22,13 @@ void format_83(char *out, size_t out_len, const uint8_t name11[11]) {
   if (ext[0])
     snprintf(out, out_len, "%s.%s", name, ext);
   else
-    snprintf(out, out_len, "%s (DIR)", name);
+    snprintf(out, out_len, "%s%s", name,
+             (dir && name[0] != '.') ? " (DIR)" : "");
 }
 
 static uint16_t fat16_get(const fat_volume_t *volume, uint32_t cluster) {
-  uint64_t fat_base =
-      (uint64_t)(volume->part_lba_start + volume->fat_start) *
-      (uint64_t)volume->bytes_per_sec;
+  uint64_t fat_base = (uint64_t)(volume->part_lba_start + volume->fat_start) *
+                      (uint64_t)volume->bytes_per_sec;
   uint64_t off = fat_base + 2ull * cluster;
 
   uint16_t v;
@@ -39,16 +40,37 @@ static inline bool cluster_is_terminal(uint16_t v) {
   return v >= FAT_EOC || v >= FAT_BAD_CLUSTER || v < 2;
 }
 
-uint16_t fat_next_cluster(const fat_volume_t *volume, uint16_t cluster) {
-  return fat16_get(volume, cluster);
+uint64_t cluster_byte_offset(const fat_volume_t *volume, uint16_t cluster) {
+  uint64_t lba = (uint64_t)(volume->part_lba_start + volume->data_start) +
+                 (uint64_t)(cluster - 2u) * volume->sec_per_clus;
+  return lba * (uint64_t)volume->bytes_per_sec;
+}
+
+bool fat16_is_dir(const fat_volume_t *volume, uint16_t cluster) {
+  size_t bytes_per_cluster = volume->bytes_per_sec * volume->sec_per_clus;
+  if (bytes_per_cluster < sizeof(fat_dirent_t))
+    return false;
+
+  uint64_t off = cluster_byte_offset(volume, cluster);
+  if (off + sizeof(fat_dirent_t) > volume->img_size)
+    return false;
+
+  const fat_dirent_t *entries = (const fat_dirent_t *)(volume->img + off);
+  const fat_dirent_t *e0 = &entries[0];
+  const fat_dirent_t *e1 = &entries[1];
+
+  if (e0->name[0] == '.' && (e0->attr & FATATTR_DIR))
+    return true;
+  if (e1->name[0] == '.' && (e1->attr & FATATTR_DIR))
+    return true;
+  return false;
 }
 
 void fat_traverse_clusters(const fat_volume_t *volume, uint16_t cur) {
-  int n_clus_to_eoc = 0;
-
-  if (cur < 2)
+  if (cur < 2 || fat16_is_dir(volume, cur))
     return;
 
+  int n_clus_to_eoc = 0;
   uint16_t tortoise = cur;
   uint16_t hare = cur;
 
@@ -63,9 +85,10 @@ void fat_traverse_clusters(const fat_volume_t *volume, uint16_t cur) {
       if (n_clus_to_eoc > 2) {
         printf("  ...\n");
         printf("  FAT[%u | 0x%x] = [EOC]\n", (unsigned)cur, (unsigned)cur);
-      } else if (n_clus_to_eoc == 0) {
-        printf("  [EOC]\n");
       }
+      // else if (n_clus_to_eoc == 0) {
+      // printf("  [EOC]\n");
+      // }
       break;
     }
     if (nxt >= FAT_BAD_CLUSTER) {
@@ -81,9 +104,9 @@ void fat_traverse_clusters(const fat_volume_t *volume, uint16_t cur) {
 
     // Advance hare twice for cycle detection when possible.
     if (!cluster_is_terminal(hare)) {
-      uint16_t h1 = fat_next_cluster(volume, hare);
+      uint16_t h1 = fat16_get(volume, hare);
       if (!cluster_is_terminal(h1)) {
-        uint16_t h2 = fat_next_cluster(volume, h1);
+        uint16_t h2 = fat16_get(volume, h1);
         hare = h2;
       } else {
         hare = h1;
@@ -91,7 +114,8 @@ void fat_traverse_clusters(const fat_volume_t *volume, uint16_t cur) {
     }
 
     if (hare == tortoise && !cluster_is_terminal(hare)) {
-      printf(" WARNING!!! Cycle detected at cluster %u: Data is corrupted \n", (unsigned)hare);
+      printf(" WARNING!!! Cycle detected at cluster %u: Data is corrupted \n",
+             (unsigned)hare);
       break;
     }
 
