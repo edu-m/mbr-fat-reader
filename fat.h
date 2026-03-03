@@ -19,6 +19,7 @@
 
 void format_83(const int dir, char *out, size_t out_len,
                const uint8_t name11[11]);
+uint16_t fat16_get(const fat_volume_t *volume, uint32_t cluster);
 void fat_traverse_clusters(const fat_volume_t *volume, uint16_t cur);
 uint16_t fat_next_cluster(const fat_volume_t *volume, uint16_t cur);
 bool fat16_is_dir(const fat_volume_t *volume, uint16_t cluster);

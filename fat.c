@@ -26,7 +26,7 @@ void format_83(const int dir, char *out, size_t out_len,
              (dir && name[0] != '.') ? " (DIR)" : "");
 }
 
-static uint16_t fat16_get(const fat_volume_t *volume, uint32_t cluster) {
+uint16_t fat16_get(const fat_volume_t *volume, uint32_t cluster) {
   uint64_t fat_base = (uint64_t)(volume->part_lba_start + volume->fat_start) *
                       (uint64_t)volume->bytes_per_sec;
   uint64_t off = fat_base + 2ull * cluster;

@@ -170,7 +170,7 @@ static int cmd_dir(const fat_volume_t *volume, const char *args) {
     if (stop)
       break;
 
-    uint16_t nxt = fat_next_cluster(volume, cur);
+    uint16_t nxt = fat16_get(volume, cur);
     if (nxt >= FAT_EOC || nxt >= FAT_BAD_CLUSTER || nxt < 2)
       break;
     cur = nxt;
